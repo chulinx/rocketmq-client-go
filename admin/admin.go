@@ -19,6 +19,8 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -37,12 +39,18 @@ type Admin interface {
 	//TopicList(ctx context.Context, mq *primitive.MessageQueue) (*remote.RemotingCommand, error)
 	//GetBrokerClusterInfo(ctx context.Context) (*remote.RemotingCommand, error)
 	FetchPublishMessageQueues(ctx context.Context, topic string) ([]*primitive.MessageQueue, error)
+	TopicList(ctx context.Context, opts ...OptionDelete) (lists *TopicList, err error)
 	Close() error
 }
 
 // TODO: move outdated context to ctx
 type adminOptions struct {
 	internal.ClientOptions
+}
+
+type TopicList struct {
+	// topic names
+	TopicNameList []string `json:"topicList"`
 }
 
 type AdminOption func(options *adminOptions)
@@ -215,6 +223,50 @@ func (a *admin) DeleteTopic(ctx context.Context, opts ...OptionDelete) error {
 		rlog.LogKeyBroker: cfg.BrokerAddr,
 	})
 	return nil
+}
+
+func (a *admin) TopicList(ctx context.Context, opts ...OptionDelete) (lists *TopicList, err error) {
+	cfg := defaultTopicConfigDelete()
+	for _, apply := range opts {
+		apply(&cfg)
+	}
+	var (
+		topicList *TopicList
+	)
+	if len(cfg.NameSrvAddr) != 0 {
+		for _, nameServer := range cfg.NameSrvAddr {
+			if topicList, err = a.fetchAllTopicList(ctx, nameServer); err != nil {
+				continue
+			}
+			return topicList, nil
+		}
+	}
+	return topicList, err
+}
+
+func (a *admin) topicList(ctx context.Context, nameSrvAddr string) (lists *TopicList, err error) {
+	request := remote.NewRemotingCommand(internal.ReqGetAllTopicListFromNameServer, nil, nil)
+	var responseCommand *remote.RemotingCommand
+
+	responseCommand, err = a.cli.InvokeSync(ctx, nameSrvAddr, request, 5*time.Second)
+	if err != nil {
+		rlog.Error(fmt.Sprintf("FetchAllTopicList error from %s, %+v", nameSrvAddr, err), nil)
+	}
+	var topicNames = &TopicList{}
+	switch responseCommand.Code {
+	case 0:
+		if responseCommand.Body == nil {
+			return nil, errors.New("FetchAllTopicList return body is nil")
+		}
+		err := json.Unmarshal(responseCommand.Body, topicNames)
+		if err != nil {
+			return nil, err
+		}
+		return topicNames, nil
+	default:
+		rlog.Warning("no any topic list", nil)
+	}
+	return nil, errors.New("empty topic list")
 }
 
 func (a *admin) FetchPublishMessageQueues(ctx context.Context, topic string) ([]*primitive.MessageQueue, error) {
