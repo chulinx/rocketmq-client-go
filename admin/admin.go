@@ -235,7 +235,7 @@ func (a *admin) TopicList(ctx context.Context, opts ...OptionDelete) (lists *Top
 	)
 	if len(cfg.NameSrvAddr) != 0 {
 		for _, nameServer := range cfg.NameSrvAddr {
-			if topicList, err = a.fetchAllTopicList(ctx, nameServer); err != nil {
+			if topicList, err = a.topicList(ctx, nameServer); err != nil {
 				continue
 			}
 			return topicList, nil
